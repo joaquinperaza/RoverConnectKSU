@@ -4,11 +4,13 @@ import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothDevice;
 import android.bluetooth.BluetoothSocket;
 import android.content.Intent;
+import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.Message;
+import android.provider.DocumentsContract;
 import android.util.Log;
 import android.view.View;
 import android.widget.Button;
@@ -23,7 +25,11 @@ import androidx.appcompat.app.AppCompatActivity;
 import androidx.appcompat.widget.Toolbar;
 import androidx.core.content.ContextCompat;
 import androidx.core.graphics.ColorUtils;
+import androidx.room.Room;
 
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -35,6 +41,7 @@ import java.util.TimerTask;
 import java.util.UUID;
 import java.util.stream.IntStream;
 
+import static android.app.PendingIntent.getActivity;
 import static android.content.ContentValues.TAG;
 
 import com.google.android.gms.maps.CameraUpdate;
@@ -45,6 +52,12 @@ import com.google.android.gms.maps.SupportMapFragment;
 import com.google.android.gms.maps.model.CircleOptions;
 import com.google.android.gms.maps.model.LatLng;
 import com.google.android.gms.maps.model.MarkerOptions;
+import com.google.maps.android.data.kml.KmlLayer;
+
+import org.xmlpull.v1.XmlPullParserException;
+
+import ksu.soilwater.roverconnect.storage.AppDatabase;
+import ksu.soilwater.roverconnect.storage.Measurement;
 
 public class MainActivity extends AppCompatActivity implements OnMapReadyCallback {
 
@@ -56,6 +69,7 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
     public static ConnectedThread connectedThread;
     public static CreateConnectThread createConnectThread;
     List<Integer> points;
+    AppDatabase db;
     GoogleMap googleMap=null;
     Integer seconds=0;
 
@@ -69,11 +83,11 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
     TextView value5;
     TextView value6;
     TextView nc1,nc2,nc3,nc4,nc5,nc6,nc7,nc8;
-    private void update(String ncTotal, String stdDev, String id, String time, String volts, LatLng loc, int[] nc){
-        value1.setText(ncTotal);
-        value2.setText(stdDev);
-        value3.setText(id);
-        value4.setText(time);
+    private void update(Measurement m, String volts, int[] nc){
+        value1.setText(m.ncTotal);
+        value2.setText(m.stdDev);
+        value3.setText(m.id);
+        value4.setText(m.time);
         value6.setText(volts);
 
         nc1.setText(String.format("%d", nc[0]));
@@ -85,7 +99,34 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
         nc7.setText(String.format("%d", nc[6]));
         nc8.setText(String.format("%d", nc[7]));
 
-        googleMap.animateCamera(CameraUpdateFactory.newLatLng(loc));
+
+        if(googleMap!=null){
+            LatLng loc=new LatLng(m.lat,m.lng);
+            googleMap.animateCamera(CameraUpdateFactory.newLatLng(loc));
+            int fill=ColorUtils.blendARGB(0xff0000ff, 0xffff0000, (Float.valueOf(m.ncTotal)-190)/250);
+            CircleOptions circleOptions=new CircleOptions();
+            circleOptions.center(loc);
+            circleOptions.radius(10);
+            circleOptions.fillColor(fill);
+            circleOptions.strokeColor(fill);
+            googleMap.addCircle(circleOptions);
+        }
+    }
+    private static final int PICK_KML_FILE = 2;
+
+    private void openFile(Uri pickerInitialUri) {
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        intent.setType("application/vnd.google-earth.kml+xml");
+        // Optionally, specify a URI for the file that should appear in the
+        // system file picker when it loads.
+        intent.putExtra(DocumentsContract.EXTRA_INITIAL_URI, pickerInitialUri);
+
+        startActivityForResult(intent, PICK_KML_FILE);
+        intent.getAction();
+    }
+    private void addKML(){
+        openFile(Uri.parse("/sdcard"));
+        //KmlLayer layer = new KmlLayer(googleMap, R.raw.geojson_file, getApplicationContext());
 
     }
     private double calculateSD(int numArray[])
@@ -105,6 +146,29 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
 
         return Math.sqrt(standardDeviation/length);
     }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, @Nullable Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        Uri content_describer = data.getData();
+        String src = content_describer.getPath();
+        Log.d("FILE",src);
+        File source = new File(src);
+        Log.d("FILE",((Boolean)source.exists()).toString());
+        try {
+            InputStream stream=getContentResolver().openInputStream(content_describer);
+            //InputStream stream=new FileInputStream(source);
+            KmlLayer layer = new KmlLayer(googleMap, stream, getApplicationContext());
+            layer.addLayerToMap();
+        } catch (FileNotFoundException e) {
+            e.printStackTrace();
+        } catch (XmlPullParserException x){
+            x.printStackTrace();
+        } catch (java.io.IOException f){
+            f.printStackTrace();
+        }
+    }
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -112,6 +176,10 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
         mapFragment = (SupportMapFragment) getSupportFragmentManager()
                 .findFragmentById(R.id.map);
         mapFragment.getMapAsync(this);
+
+        AppDatabase db = Room.databaseBuilder(getApplicationContext(),
+                AppDatabase.class, "cache-data").build();
+
          value1=findViewById(R.id.value1);
          value2=findViewById(R.id.value2);
          value3=findViewById(R.id.value3);
@@ -146,6 +214,9 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
 
         // UI Initialization
         final Button buttonConnect = findViewById(R.id.buttonConnect);
+        final Button buttonKML = findViewById(R.id.buttonKML);
+        final Button buttonClean = findViewById(R.id.buttonClean);
+
         final Toolbar toolbar = findViewById(R.id.toolbar);
         final ProgressBar progressBar = findViewById(R.id.progressBar);
         progressBar.setVisibility(View.GONE);
@@ -216,17 +287,17 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
                         Double lng = -1*Double.parseDouble(packets[28].trim());
                         Double stddev = calculateSD(nc);
                         Log.e("STD: ",stddev.toString());
-                        LatLng loc= new LatLng(lat,lng);
                         points.add(count);
-                        update(count.toString(), String.format("%.3f", stddev), packets[0].trim(), packets[1], String.format("%.2f", volts), loc, nc);
-                        if(googleMap!=null){
-                            int fill=ColorUtils.blendARGB(0xff0000ff, 0xffff0000, (Float.valueOf(count)-190)/250);
-                            CircleOptions circleOptions=new CircleOptions();
-                            circleOptions.center(loc);
-                            circleOptions.radius(10);
-                            circleOptions.fillColor(fill);
-                            googleMap.addCircle(circleOptions);
-                        }
+                        Measurement m=new Measurement();
+                        m.ncTotal=count.toString();
+                        m.stdDev= String.format("%.3f", stddev);
+                        m.id=packets[0].trim();
+                        m.lat=lat;
+                        m.lng=lng;
+                        m.time=packets[1];
+                        update(m, String.format("%.2f", volts), nc);
+                        db.measurementData().insertAll(m);
+
                         break;
                 }
             }
@@ -241,6 +312,21 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
                 startActivity(intent);
             }
         });
+        buttonKML.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                // Move to adapter list
+                addKML();
+            }
+        });
+        buttonClean.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                // Move to adapter list
+                googleMap.clear();
+                db.measurementData().clearTable();
+            }
+        });
 
     }
 
@@ -249,9 +335,11 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
     @Override
     public void onMapReady(GoogleMap gm) {
         googleMap=gm;
-        googleMap.addMarker(new MarkerOptions()
-                .position(new LatLng(0, 0))
-                .title("Marker"));
+        List<Measurement> cache= db.measurementData().getAll();
+        for (Measurement m:cache) {
+            int[]nc_temp={0,0,0,0,0,0,0,0};
+            update(m,"--", nc_temp);
+        }
     }
 
     /* ============================ Thread to Create Bluetooth Connection =================================== */
