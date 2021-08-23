@@ -55,7 +55,7 @@
         android:text="Clear Temp"
         android:textColor="@android:color/background_light"
         app:layout_constraintBottom_toBottomOf="@+id/toolbar"
-        app:layout_constraintEnd_toStartOf="@+id/buttonConnect"
+        app:layout_constraintEnd_toStartOf="@id/buttonKML"
         app:layout_constraintTop_toTopOf="@+id/toolbar" />
 
     <ProgressBar
