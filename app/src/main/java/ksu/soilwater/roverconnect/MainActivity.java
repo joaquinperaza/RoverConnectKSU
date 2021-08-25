@@ -25,6 +25,7 @@ import androidx.appcompat.app.AppCompatActivity;
 import androidx.appcompat.widget.Toolbar;
 import androidx.core.content.ContextCompat;
 import androidx.core.graphics.ColorUtils;
+import androidx.room.DatabaseConfiguration;
 import androidx.room.Room;
 
 import java.io.File;
@@ -52,10 +53,17 @@ import com.google.android.gms.maps.SupportMapFragment;
 import com.google.android.gms.maps.model.CircleOptions;
 import com.google.android.gms.maps.model.LatLng;
 import com.google.android.gms.maps.model.MarkerOptions;
+import com.google.android.gms.tasks.OnSuccessListener;
 import com.google.maps.android.data.kml.KmlLayer;
 
 import org.xmlpull.v1.XmlPullParserException;
 
+import io.reactivex.Completable;
+import io.reactivex.Observable;
+import io.reactivex.Single;
+import io.reactivex.functions.Action;
+import io.reactivex.functions.Consumer;
+import io.reactivex.schedulers.Schedulers;
 import ksu.soilwater.roverconnect.storage.AppDatabase;
 import ksu.soilwater.roverconnect.storage.Measurement;
 
@@ -150,6 +158,7 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
     @Override
     protected void onActivityResult(int requestCode, int resultCode, @Nullable Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
+        if(data!=null){
         Uri content_describer = data.getData();
         String src = content_describer.getPath();
         Log.d("FILE",src);
@@ -167,18 +176,19 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
         } catch (java.io.IOException f){
             f.printStackTrace();
         }
-    }
+    }}
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
+        db = Room.databaseBuilder(getApplicationContext(),
+                AppDatabase.class, "cache-data").build();
         mapFragment = (SupportMapFragment) getSupportFragmentManager()
                 .findFragmentById(R.id.map);
         mapFragment.getMapAsync(this);
 
-        AppDatabase db = Room.databaseBuilder(getApplicationContext(),
-                AppDatabase.class, "cache-data").build();
+
 
          value1=findViewById(R.id.value1);
          value2=findViewById(R.id.value2);
@@ -296,8 +306,19 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
                         m.lng=lng;
                         m.time=packets[1];
                         update(m, String.format("%.2f", volts), nc);
-                        db.measurementData().insertAll(m);
-
+                        Observable.fromCallable(() -> db.measurementData().insert(m));
+                        db.measurementData().insert(m).subscribeOn(Schedulers.io()).subscribe(new Action() {
+                            @Override
+                            public void run() throws Exception {
+                                // success
+                            }
+                        }, new Consumer< Throwable >() {
+                            @Override
+                            public void accept(Throwable throwable) throws Exception {
+                                // error
+                                Log.e("Err",throwable.toString());
+                            }
+                        });
                         break;
                 }
             }
@@ -331,15 +352,27 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
     }
 
 
+    void loadCache(List<Measurement> cache){
+        Log.e("CACHE: ", cache.toString());
+        for (Measurement m:cache) {
+            int[]nc_temp={0,0,0,0,0,0,0,0};
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    update(m,"--", nc_temp);
+                }
+            });
 
+        }
+    }
     @Override
     public void onMapReady(GoogleMap gm) {
         googleMap=gm;
-        List<Measurement> cache= db.measurementData().getAll();
-        for (Measurement m:cache) {
-            int[]nc_temp={0,0,0,0,0,0,0,0};
-            update(m,"--", nc_temp);
-        }
+
+        db.measurementData().getAll().subscribeOn(Schedulers.io()).subscribe((Consumer<List<Measurement>>) measurments -> {
+            loadCache(measurments);
+        });
+
     }
 
     /* ============================ Thread to Create Bluetooth Connection =================================== */
